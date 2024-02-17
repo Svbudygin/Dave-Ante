@@ -23,12 +23,37 @@ class Form(StatesGroup):
     from_what_u_find_item_state = State()
 
 
+# @dp.message_handler(commands=['start'])
+# async def process_start_command(message: types.Message, state: FSMContext):
+#     msg3 = await message.answer("Здравствуйте!👋\nПросим Вас указать ваши данные. Как Вас зовут?")
+#     message_delete[message.chat.id] = [msg3.message_id]
+#     print(message.from_user.id)
+#     await Form.name_state.set()
 @dp.message_handler(commands=['start'])
 async def process_start_command(message: types.Message, state: FSMContext):
-    msg3 = await message.answer("Здравствуйте!👋\nПросим Вас указать ваши данные. Как Вас зовут?")
-    message_delete[message.chat.id] = [msg3.message_id]
-    print(message.from_user.id)
-    await Form.name_state.set()
+    channel_link = 'https://t.me/+bFibV6s-K-o3ZjZi'
+    markup = InlineKeyboardMarkup(row_width=1)
+    button1 = InlineKeyboardButton("Подписаться", url=channel_link)
+    button2 = InlineKeyboardButton("Проверить подписку", callback_data="check_subscr")
+    markup.add(button1, button2)
+    await message.answer(f"Здравствуйте! Подпишитесь, пожалуйста, на наш канал", reply_markup=markup)
+
+
+@dp.callback_query_handler(lambda query: query.data in {'check_subscr'})
+async def bought_item1(callback_query: types.CallbackQuery, state: FSMContext):
+    channel_id = -1002122669585
+    print(callback_query.message.from_user)
+    user = await bot.get_chat_member(chat_id=channel_id, user_id=callback_query.from_user.id)
+    is_subscribed = user.status == 'member' or user.status == 'creator' or user.status == 'administrator'
+    print(user.status)
+    if is_subscribed:
+        msg3 = await bot.edit_message_text(
+            chat_id=callback_query.message.chat.id,
+            message_id=callback_query.message.message_id,
+            text="Здравствуйте!👋\nПросим Вас указать ваши данные. Как Вас зовут?"
+        )
+        message_delete[callback_query.message.chat.id] = [msg3.message_id]
+        await Form.name_state.set()
 
 
 @dp.message_handler(state=Form.name_state)
@@ -131,7 +156,7 @@ async def feedback(message: types.Message, state: FSMContext):
 
 @dp.callback_query_handler(lambda query: query.data in {'praise', 'questions', 'complain', 'improve'},
                            state=Form.from_proof_to_feedback_state)
-async def bought_item(callback_query: types.CallbackQuery, state: FSMContext):
+async def bought_item2(callback_query: types.CallbackQuery, state: FSMContext):
     await state.update_data(FeedbackType=callback_query.data)
     if callback_query.data == 'praise':
         await bot.edit_message_text(
