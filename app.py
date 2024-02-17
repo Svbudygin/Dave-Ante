@@ -3,15 +3,16 @@ from aiogram.contrib.fsm_storage.memory import MemoryStorage
 from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters.state import State, StatesGroup
 from aiogram import Bot, Dispatcher, executor, types
-from config import api_token, Admin_sergo_id, Admin_electro_id
+from config import api_token, Admin_sergo_id, Admin_electro_id, mail_to
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-
+import sqlite3
 from mail import send_email, send_email_with_photo
 
 message_delete = {}
 API_TOKEN = api_token
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher(bot, storage=MemoryStorage())
+
 
 
 class Form(StatesGroup):
@@ -21,14 +22,11 @@ class Form(StatesGroup):
     feedback_state = State()
     from_proof_to_feedback_state = State()
     from_what_u_find_item_state = State()
+    from_not_bought_to_complain = State()
+    feedback_state_only_complain = State()
+    take_part_in_giveaway = State()
 
 
-# @dp.message_handler(commands=['start'])
-# async def process_start_command(message: types.Message, state: FSMContext):
-#     msg3 = await message.answer("Здравствуйте!👋\nПросим Вас указать ваши данные. Как Вас зовут?")
-#     message_delete[message.chat.id] = [msg3.message_id]
-#     print(message.from_user.id)
-#     await Form.name_state.set()
 @dp.message_handler(commands=['start'])
 async def process_start_command(message: types.Message, state: FSMContext):
     channel_link = 'https://t.me/+bFibV6s-K-o3ZjZi'
@@ -41,11 +39,14 @@ async def process_start_command(message: types.Message, state: FSMContext):
 
 @dp.callback_query_handler(lambda query: query.data in {'check_subscr'})
 async def bought_item1(callback_query: types.CallbackQuery, state: FSMContext):
+    db = sqlite3.connect('data/giveaway.db')
+    cur = db.cursor()
+    cur.execute("CREATE TABLE IF NOT EXISTS Users (id int, username_url TEXT, name TEXT NOT NULL)")
+    db.commit()
+    db.close()
     channel_id = -1002122669585
-    print(callback_query.message.from_user)
     user = await bot.get_chat_member(chat_id=channel_id, user_id=callback_query.from_user.id)
     is_subscribed = user.status == 'member' or user.status == 'creator' or user.status == 'administrator'
-    print(user.status)
     if is_subscribed:
         msg3 = await bot.edit_message_text(
             chat_id=callback_query.message.chat.id,
@@ -54,6 +55,13 @@ async def bought_item1(callback_query: types.CallbackQuery, state: FSMContext):
         )
         message_delete[callback_query.message.chat.id] = [msg3.message_id]
         await Form.name_state.set()
+    else:
+        await bot.edit_message_text(
+            chat_id=callback_query.message.chat.id,
+            message_id=callback_query.message.message_id,
+            text="Извините, Вы должны подписаться на наш канал! /start"
+        )
+        await state.finish()
 
 
 @dp.message_handler(state=Form.name_state)
@@ -75,23 +83,26 @@ async def process_name(message: types.Message, state: FSMContext):
 @dp.message_handler(state=Form.age_state)
 async def process_age(message: types.Message, state: FSMContext):
     age_of_user = message.text
-    message_delete.get(message.chat.id, []).append(message.message_id)
-    for message_id in message_delete.get(message.chat.id, []):
-        try:
-            await bot.delete_message(message.chat.id, message_id)
-        except aiogram.utils.exceptions.MessageToDeleteNotFound:
-            pass
-    async with state.proxy() as data:
-        data['age_of_user'] = age_of_user
-    msg3 = await message.answer(f"Отлично! Из какого Вы города?")
-    message_delete[message.chat.id] = [msg3.message_id]
-    await Form.city_state.set()
+    if age_of_user.isdigit():
+        message_delete.get(message.chat.id, []).append(message.message_id)
+        for message_id in message_delete.get(message.chat.id, []):
+            try:
+                await bot.delete_message(message.chat.id, message_id)
+            except aiogram.utils.exceptions.MessageToDeleteNotFound:
+                pass
+        async with state.proxy() as data:
+            data['age_of_user'] = age_of_user
+        msg3 = await message.answer(f"Отлично! Из какого Вы города?")
+        message_delete[message.chat.id] = [msg3.message_id]
+        await Form.city_state.set()
+    else:
+        await message.answer(text=f"{message.text} - это не цифра! /start")
+        await state.finish()
 
 
 @dp.message_handler(state=Form.city_state)
 async def process_city(message: types.Message, state: FSMContext):
     city_of_user = message.text
-
     message_delete.get(message.chat.id, []).append(message.message_id)
     for message_id in message_delete.get(message.chat.id, []):
         try:
@@ -114,13 +125,17 @@ async def process_city(message: types.Message, state: FSMContext):
 @dp.callback_query_handler(lambda query: query.data in {'bought', 'not_bought'}, state=Form.city_state)
 async def bought_item(callback_query: types.CallbackQuery, state: FSMContext):
     if callback_query.data == 'not_bought':
-        await bot.edit_message_text(
-            chat_id=callback_query.message.chat.id,
-            message_id=callback_query.message.message_id,
-            text="Жаль, что вы не купили товар. Может быть в следующий раз!", reply_markup=None
+        message_delete.get(callback_query.message.chat.id, []).append(callback_query.message.message_id)
+        for message_id in message_delete.get(callback_query.message.chat.id, []):
+            try:
+                await bot.delete_message(callback_query.message.chat.id, message_id)
+            except aiogram.utils.exceptions.MessageToDeleteNotFound:
+                pass
 
-        )
-        await state.finish()
+        await bot.send_message(callback_query.message.chat.id,
+                               text='Ваше мнение для нас очень важно, pасскажите, что не устроило вас в нашем товаре?')
+        await state.update_data(FeedbackType=callback_query.data)
+        await Form.feedback_state_only_complain.set()
     else:
         await bot.edit_message_text(
             chat_id=callback_query.message.chat.id,
@@ -145,7 +160,7 @@ async def feedback(message: types.Message, state: FSMContext):
     button1 = InlineKeyboardButton("Хочу похвалить вас", callback_data='praise')
     button2 = InlineKeyboardButton("Хочу предложить вам улучшить продукт", callback_data='improve')
     button3 = InlineKeyboardButton("Хочу пожаловаться на ваш товар", callback_data='complain')
-    button4 = InlineKeyboardButton("У вас есть вопросы к нам?", callback_data='questions')
+    button4 = InlineKeyboardButton("У меня есть вопросы", callback_data='questions')
     markup.add(button1, button2, button3, button4)
 
     await message.answer(
@@ -176,7 +191,8 @@ async def bought_item2(callback_query: types.CallbackQuery, state: FSMContext):
         await bot.edit_message_text(
             chat_id=callback_query.message.chat.id,
             message_id=callback_query.message.message_id,
-            text="Наши специалисты готовы ответить на все ваши вопросы. Чем мы можем помочь вам?")
+            text="Наши специалисты готовы ответить на все ваши вопросы. Чем мы можем помочь вам?\nПожалуйста, расскажите, как вы нашли наш товар.\nИ не забудьте указать в сообщении ваши контактные данные - почту или телефон. Наш менеджер свяжется с вами."
+        )
         await Form.feedback_state.set()
     elif callback_query.data == 'improve':
         await bot.edit_message_text(
@@ -187,13 +203,31 @@ async def bought_item2(callback_query: types.CallbackQuery, state: FSMContext):
         await Form.feedback_state.set()
 
 
+@dp.message_handler(state=Form.feedback_state_only_complain)
+async def feedback_complain_func(message: types.Message, state: FSMContext):
+    # markup = InlineKeyboardMarkup(row_width=1)
+    # button1 = InlineKeyboardButton("Участвовать в розыгрыше!", callback_data='drawing')
+    # markup.add(button1)
+    await bot.send_message(message.chat.id,
+                           "Благодарим вас за предоставленную информацию.С уважением команда Dave&Ante"
+                           # ,reply_markup=markup
+                           )
+    feedback_from_user = message.text
+    async with state.proxy() as data:
+        text_to_admin = f"Name: {data['name_of_user']}\nAge: {data['age_of_user']}\nCity: {data['city_of_user']}\nКомментарий ({data['FeedbackType']}): {feedback_from_user}"
+        await bot.send_message(chat_id=Admin_sergo_id, text=text_to_admin)
+
+    send_email(mail_to, text_to_admin)
+    await state.finish()
+
+
 @dp.message_handler(state=Form.feedback_state)
 async def feedback_func(message: types.Message, state: FSMContext):
     markup = InlineKeyboardMarkup(row_width=1)
     button1 = InlineKeyboardButton("Участвовать в розыгрыше!", callback_data='drawing')
     markup.add(button1)
     await bot.send_message(message.chat.id,
-                           "Благодарим вас за предоставленную информацию.С уважением команда Dave&Ante",
+                           "Благодарим вас за предоставленную информацию. С уважением команда Dave&Ante",
                            reply_markup=markup)
     feedback_from_user = message.text
     async with state.proxy() as data:
@@ -206,7 +240,24 @@ async def feedback_func(message: types.Message, state: FSMContext):
     file_path = file_info.file_path
 
     file_url = f"https://api.telegram.org/file/bot{API_TOKEN}/{file_path}"
-    print(send_email_with_photo('mishalogv@ya.ru', text_to_admin, file_url))
+    send_email_with_photo(mail_to, text_to_admin, file_url)
+    await state.finish()
+
+
+@dp.callback_query_handler(lambda query: query.data in {'drawing'})
+async def giveaway_func(callback_query: types.CallbackQuery, state: FSMContext):
+    db = sqlite3.connect('data/giveaway.db')
+    cur = db.cursor()
+    await bot.edit_message_text(
+        chat_id=callback_query.message.chat.id,
+        message_id=callback_query.message.message_id,
+        text="Спасибо за участие! Результаты розыгрышей будут приходить сюда."
+    )
+    user_url = callback_query.from_user.username
+    cur.execute('INSERT INTO Users (id, username_url) VALUES (?,?)',
+                (callback_query.from_user.id, user_url))
+    db.commit()
+    db.close()
     await state.finish()
 
 
