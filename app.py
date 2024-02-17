@@ -18,6 +18,8 @@ class Form(StatesGroup):
     age_state = State()
     city_state = State()
     feedback_state = State()
+    from_proof_to_feedback_state = State()
+    from_what_u_find_item_state = State()
 
 
 @dp.message_handler(commands=['start'])
@@ -58,9 +60,8 @@ async def process_name(message: types.Message, state: FSMContext):
 
 
 @dp.message_handler(state=Form.age_state)
-async def process_name(message: types.Message, state: FSMContext):
+async def process_age(message: types.Message, state: FSMContext):
     age_of_user = message.text
-    print(age_of_user)
     message_delete.get(message.chat.id, []).append(message.message_id)
     for message_id in message_delete.get(message.chat.id, []):
         try:
@@ -73,7 +74,7 @@ async def process_name(message: types.Message, state: FSMContext):
 
 
 @dp.message_handler(state=Form.city_state)
-async def process_name(message: types.Message, state: FSMContext):
+async def process_city(message: types.Message, state: FSMContext):
     city_of_user = message.text
     message_delete.get(message.chat.id, []).append(message.message_id)
     for message_id in message_delete.get(message.chat.id, []):
@@ -102,6 +103,7 @@ async def bought_item(callback_query: types.CallbackQuery):
         message_id=callback_query.message.message_id,
         text="Пожалуйста, отправьте фото купленного товара."
     )
+    await Form.from_proof_to_feedback_state.set()
 
 
 @dp.callback_query_handler(lambda query: query.data == 'not_bought')
@@ -113,11 +115,11 @@ async def not_bought_item(callback_query: types.CallbackQuery):
     )
 
 
-@dp.message_handler(commands=['feedback'])
-async def feedback(message: types.Message):
+@dp.message_handler(state=Form.from_proof_to_feedback_state)
+async def feedback(message: types.Message, state: FSMContext):
     markup = InlineKeyboardMarkup(row_width=1)
     button1 = InlineKeyboardButton("Хочу похвалить вас", callback_data='praise')
-    button2 = InlineKeyboardButton("Хочу предложить вам улучшить свой продукт", callback_data='improve')
+    button2 = InlineKeyboardButton("Хочу предложить вам улучшить продукт", callback_data='improve')
     button3 = InlineKeyboardButton("Хочу пожаловаться на ваш товар", callback_data='complain')
     button4 = InlineKeyboardButton("У вас есть вопросы к нам?", callback_data='questions')
     markup.add(button1, button2, button3, button4)
@@ -126,67 +128,73 @@ async def feedback(message: types.Message):
         "Мы очень ценим наших покупателей, в рамках нашего возрастающего бренда, мы будем проводить розыгрыши (Профессиональная фотосессия, билеты на выставки, Stand-up концерты, экскурсии). Для того чтобы ознакомиться с условиями розыгрыша - просим подписаться на наш телеграмм-канал.\n\nС радостью готовы услышать ваши похвалы и жалобы по нашему товару",
         reply_markup=markup
     )
-
-
-
-
+    await state.finish()
 
 
 @dp.callback_query_handler(lambda query: query.data in {'praise', 'questions', 'complain', 'improve'})
-async def bought_item(callback_query: types.CallbackQuery):
-    print("in")
+async def bought_item(callback_query: types.CallbackQuery, state: FSMContext):
+    await state.update_data(FeedbackType=callback_query.data)
     if callback_query.data == 'praise':
-        print("in")
         await bot.edit_message_text(
             chat_id=callback_query.message.chat.id,
             message_id=callback_query.message.message_id,
             text="Готовы выслушать вас:"
         )
+        await Form.feedback_state.set()
     elif callback_query.data == 'complain':
         await bot.edit_message_text(
             chat_id=callback_query.message.chat.id,
             message_id=callback_query.message.message_id,
             text="Ваше мнение для нас очень важно. Расскажите, что не устроило вас в нашем товаре."
         )
+        await Form.feedback_state.set()
     elif callback_query.data == 'questions':
         await bot.edit_message_text(
             chat_id=callback_query.message.chat.id,
             message_id=callback_query.message.message_id,
             text="Наши специалисты готовы ответить на все ваши вопросы. Чем мы можем помочь вам?")
+        await Form.feedback_state.set()
     elif callback_query.data == 'improve':
         await bot.edit_message_text(
             chat_id=callback_query.message.chat.id,
             message_id=callback_query.message.message_id,
             text="Мы готовы внимательно рассмотреть ваши предложения по совершенствованию нашего продукта:"
         )
-    await Form.feedback_state.set()
+        await Form.feedback_state.set()
+
+
 
 @dp.message_handler(state=Form.feedback_state)
-async def process_name(message: types.Message, state: FSMContext):
-    feedback = message.text
-
-@dp.message_handler(state=Form.feedback_state)
-async def process_name(message: types.Message, state: FSMContext):
+async def feedback_func(message: types.Message, state: FSMContext):
     feedback_from_user = message.text
-    message_delete.get(message.chat.id, []).append(message.message_id)
-    for message_id in message_delete.get(message.chat.id, []):
-        try:
-            await bot.delete_message(message.chat.id, message_id)
-        except aiogram.utils.exceptions.MessageToDeleteNotFound:
-            pass
-    await state.finish()
-    user_name = message.from_user.first_name
-    markup = InlineKeyboardMarkup(row_width=1)
-    button1 = InlineKeyboardButton("Я купил(а) товар", callback_data='bought')
-    button2 = InlineKeyboardButton("Я не купил(а) товар", callback_data='not_bought')
-    markup.add(button1, button2)
+    data = await state.get_data()
 
-    await message.answer(
-        f"Здравствуйте, {user_name}! Бренд Dave&Ante рада вашему присутствию в нашем чат-боте.\n"
-        "Подтвердите пожалуйста покупку товара, сделав фотографию товара (не в пункте выдачи заказов).",
-        reply_markup=markup
-    )
+    if data.get("FeedbackType") == 'praise':
+        await bot.send_message(message.chat.id,
+                               "Благодарим вас за уделенное время, ведь вместе мы станем лучше. Скажите пожалуйста, как нашли наш товар?")
+    elif data.get("FeedbackType") == 'improve':
+        await bot.send_message(message.chat.id,
+                               "Благодарим вас за уделенное время, ведь вместе мы станем лучше. Скажите пожалуйста, как нашли наш товар?")
+    elif data.get("FeedbackType") == 'complain':
+        await bot.send_message(message.chat.id,
+                               "Мы извиняемся за предоставленное вам неудобство, впредь мы будем делать все, чтобы не повторять этих ошибок. Оставьте, пожалуйста, ваши контакты. Мы свяжемся с вами и если решение проблемы будет в нашей компетенции, обязательно решим ее. С уважением, команда Dave&Ante. Скажите пожалуйста, как нашли наш товар?")
+    await Form.from_what_u_find_item_state.set()
 
+@dp.message_handler(state=Form.from_what_u_find_item_state)
+async def feedback_func(message: types.Message, state: FSMContext):
+    feedback_from_user = message.text
+    data = await state.get_data()
+
+    if data.get("FeedbackType") == 'praise':
+        await bot.send_message(message.chat.id,
+                               "Благодарим вас за предоставленную информацию.С уважением команда Dave&Ante")
+    elif data.get("FeedbackType") == 'complain':
+        await bot.send_message(message.chat.id,
+                               "Благодарим вас за предоставленную информацию.С уважением команда Dave&Ante")
+    elif data.get("FeedbackType") == 'improve':
+        await bot.send_message(message.chat.id,
+                               "Благодарим вас за предоставленную информацию.С уважением команда Dave&Ante")
+    await Form.from_what_u_find_item_state.set()
 
 if __name__ == '__main__':
     executor.start_polling(dp)
